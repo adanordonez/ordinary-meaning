@@ -1,91 +1,140 @@
-# autoresearch
+# Ordinary Meaning Tool
 
-![teaser](progress.png)
+A transparent, reproducible protocol for determining the plain-English meaning of legal terms using multiple AI models and mathematical evaluation.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+![How it works](ordinary-meaning-diagram.png)
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+Inspired by Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) loop — a system that lets an AI agent autonomously iterate on machine-learning code, keeping only the improvements. This tool adapts that pattern for legal interpretation: instead of optimizing training code, it optimizes definitions of words.
 
-## How it works
+## What it does
 
-The repo is deliberately kept small and only really has three files that matter:
+You give it a word, the sentence it appears in, and optionally the full contract. The tool asks three AI models — Claude (Anthropic), GPT (OpenAI), and Sonar Pro (Perplexity) — to define that word in plain English. Each model tries eight different prompting strategies. A locked mathematical evaluator picks the best definition from each model. No AI scores another AI's work.
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+## How the loop works
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+```
+For each model (Claude, GPT, Perplexity):
+    For each prompting strategy (bare, dictionary, context, examples, ...):
+        1. Generate a definition
+        2. Convert the definition to a vector (1,536 numbers)
+        3. Convert the contract clause to a vector
+        4. Compute cosine similarity between them
+        5. If this score > current best → keep it
+        6. If not → discard it
+    Surviving definition = the one with the highest context alignment
+```
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+The key: the evaluation is pure math. Same inputs always produce the same score. The models generate definitions. A formula evaluates them. The two never mix.
+
+## What it measures
+
+| Metric | What it compares | What it tells you |
+|---|---|---|
+| **Context Alignment** | Definition vs. the contract clause | Does this definition capture the meaning *in this document*? |
+| **Term Alignment** | Definition vs. the bare word | Does this definition match the word's general meaning *in the world*? |
+| **Consensus** | Definition vs. other models' definitions | Do the three models *agree with each other*? |
+
+No single winner is declared. All three numbers are shown independently. The interpreter decides.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** Python 3.10+, API keys for OpenAI, Anthropic, and Perplexity.
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# 1. Clone the repo
+git clone https://github.com/adanordonez/ordinary-meaning.git
+cd ordinary-meaning
 
 # 2. Install dependencies
-uv sync
+pip install -r requirements.txt
 
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
+# 3. Create a .env file with your API keys
+echo 'OPENAI_API_KEY=sk-your-key-here' >> .env
+echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' >> .env
+echo 'PERPLEXITY_API_KEY=pplx-your-key-here' >> .env
 
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+# 4. Run the app
+streamlit run app.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
-
-## Running the agent
-
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
-
-```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
-```
-
-The `program.md` file is essentially a super lightweight "skill".
+The app opens in your browser. Enter a term, paste the clause, optionally upload the full contract (PDF/DOCX/TXT), and click Run.
 
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+app.py          — Streamlit web interface (main entry point)
+prepare.py      — LLM API helpers + embedding math (evaluation logic)
+strategies.py   — Prompting strategies and prompt construction
+extract.py      — PDF/DOCX/TXT text extraction
+input.md        — Default term and context (read by the app)
 ```
+
+## Prompting strategies
+
+Each model runs through up to eight strategies. When a full document is uploaded, it is appended to every prompt so the model always has the full picture.
+
+| Strategy | What it asks |
+|---|---|
+| **Bare** | "What does this word mean?" — no context |
+| **Dictionary** | "Define this like a dictionary editor" |
+| **Context** | "What does it mean in this passage?" |
+| **Examples** | "Give examples of what it includes and doesn't" |
+| **Contrastive** | "What does it include and exclude?" |
+| **Full document** | "Define it based on this entire contract" |
+| **Document scope** | "Define it as used in this clause, with the full contract as background" |
+| **Document contrastive** | "Include/exclude — point to specific parts of the contract" |
+
+## The math
+
+Evaluation uses [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity) on vectors from OpenAI's `text-embedding-3-small` model. The formula:
+
+```
+similarity = dot(A, B) / (‖A‖ × ‖B‖)
+```
+
+Both the definition and the comparison text (clause or bare term) are converted to 1,536-dimensional vectors. The formula measures how close they are. The result is always between 0 and 1. Higher means more similar in meaning.
+
+This is the same math used in search engines, recommendation systems, and information retrieval. It is deterministic — same inputs, same output, every time.
 
 ## Design choices
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+- **Three providers, not one.** A single model's output is an anecdote. Three independent models converging is evidence.
+- **No LLM-based scoring.** Models generate definitions. Math evaluates them. The evaluator cannot be gamed.
+- **Full transparency.** Every prompt, every raw output, every score is visible in the UI. Nothing is hidden.
+- **No composite score.** Context alignment, term alignment, and consensus are shown independently. The interpreter weighs them.
+- **Document injection.** When a contract is uploaded, it is appended to every prompt — even the "bare" strategy — so the model always knows the domain.
 
-## Platform support
+## Sample output
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+Run on "storage areas" from a contractor–subcontractor agreement (Section 3.3):
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+| Model | Surviving Strategy | Context Alignment | Term Alignment | Consensus |
+|---|---|---|---|---|
+| Claude Sonnet 4.6 | document_contrastive | 0.6295 | 0.5236 | 0.8913 |
+| GPT-5.4 Nano | document_scope | 0.6855 | 0.5105 | 0.8966 |
+| Perplexity Sonar Pro | document_scope | 0.6936 | 0.5941 | 0.8960 |
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+Average cross-model similarity: **0.8946** — all three models converged on the same core meaning.
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+## Inspiration
 
-## Notable forks
+This tool adapts [Karpathy's AutoResearch](https://github.com/karpathy/autoresearch) pattern:
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+| | Karpathy's AutoResearch | This tool |
+|---|---|---|
+| **Domain** | ML training code | Legal word definitions |
+| **What the agent edits** | `train.py` (model architecture, hyperparameters) | Prompting strategies (different ways of asking) |
+| **What's locked** | `prepare.py` (evaluation harness) | `prepare.py` (embedding math) |
+| **Metric** | val_bpb (lower is better) | Context alignment / cosine similarity (higher is better) |
+| **Loop** | Edit code → train → measure → keep or revert | Generate definition → embed → measure → keep or discard |
+| **Key difference** | Single score, single model | Three independent scores, three independent models |
+
+## Limitations
+
+- All scoring runs through one embedding model (`text-embedding-3-small`). Blind spots in that model affect scores.
+- Cosine similarity measures relatedness, not definition quality. A paraphrase of the clause could score high without being a good definition.
+- The AI training data is not curated for legal use. The models reflect how people actually talk, not how editors define words.
+- Words change meaning over time. The models reflect current usage.
 
 ## License
 
