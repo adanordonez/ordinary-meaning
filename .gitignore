@@ -21,3 +21,12 @@ dev/
 
 # Results file
 results.tsv
+
+# API keys
+.env
+
+# Experiment logs
+run.log
+
+# Generated definition
+definition.md
