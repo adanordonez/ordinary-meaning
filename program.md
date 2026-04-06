@@ -3,17 +3,26 @@
 This tool determines the plain-English meaning of any word or phrase by
 querying multiple AI models and evaluating the results with deterministic math.
 
+## Key design principle
+
+Models define the term **blind** — they never see the contract clause or
+document. The contract is used only as a comparison target. This ensures
+definitions reflect the word's ordinary meaning from training data, not
+a paraphrase of any specific document.
+
 ## How it works
 
-1. The user provides a term, the clause it appears in, and optionally a full document.
-2. The tool asks three models (Claude, GPT, Perplexity) to define the term using
-   eight different prompting strategies.
-3. Each definition is converted to a vector embedding and compared to the contract
-   clause using cosine similarity (context alignment).
-4. The definition with the highest context alignment survives. All others are discarded.
-5. The surviving definitions are shown side by side with three independent measurements:
-   context alignment (document meaning), term alignment (world meaning), and consensus
-   (cross-model agreement).
+1. The user provides a term and the clause where it appears.
+2. Three models (Claude, GPT, Perplexity) define the term using five
+   prompting strategies. Models see only the word — never the clause.
+3. Each strategy runs multiple rounds (autoresearch loop). The definition
+   closest to the contract clause (by cosine similarity) survives.
+4. All strategies are shown with two scores: context alignment (how well
+   the blind definition maps onto the document) and term alignment (how
+   close it is to the word's general meaning).
+5. The gap between the two scores is the finding: small gap means the
+   ordinary meaning fits the contract; large gap means the contract may
+   use the term unusually.
 
 ## Files
 
